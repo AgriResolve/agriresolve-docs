@@ -1,5 +1,11 @@
 # AgriResolve Protocol Documentation (`agriresolve-docs`)
 
+## 🌍 Live Ecosystem & Resources
+* **Web App:** [https://agrires.vercel.app/](https://agrires.vercel.app/)
+* **Documentation Site:** [https://agriresolve.github.io/agriresolve-docs/](https://agriresolve.github.io/agriresolve-docs/)
+* **API / Indexer:** [https://agriresolve-app.onrender.com/health](https://agriresolve-app.onrender.com/health)
+* **Demo Video:** [Watch on Google Drive](https://drive.google.com/file/d/19gYJMcZit6NssLxwmhBllQecmnPoG_F8/view)
+
 Standalone technical documentation and protocol reference for **AgriResolve** on Stellar Soroban. Built with Nextra and Next.js for deployment to Vercel.
 
 ---
