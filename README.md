@@ -12,14 +12,14 @@ Standalone technical documentation and protocol reference for **AgriResolve** on
 
 ## Deployed Stellar Testnet Contracts
 
-| Contract Name | Contract Identifier | Explorer |
+| Contract Name | Role & Responsibility | Status |
 |:---|:---|:---|
-| `agriresolve-registry` | `CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6` | [View on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6) |
-| `agriresolve-escrow` | `CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC` | [View on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC) |
-| `agriresolve-dispute` | `CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N` | [View on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N) |
-| `Testnet USDC` | `CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK` | [View on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK) |
+| `agriresolve-registry` | Participant identity, commodity quality thresholds, and token whitelist | Active (Testnet) |
+| `agriresolve-escrow` | SEP-41 collateral custody, delivery confirmations, and split disbursements | Active (Testnet) |
+| `agriresolve-dispute` | Evidence dossiers, arbitration status, and cross-contract resolution | Active (Testnet) |
+| `Testnet USDC` | Settlement asset token contract | Active (Testnet) |
 
-Administrative Public Key: `GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y`
+> Contract addresses are configured securely via environment variables.
 
 ---
 
