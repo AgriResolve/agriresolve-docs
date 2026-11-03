@@ -1,0 +1,8 @@
+{
+  "index": "1. Introduction & Problem Scale",
+  "protocol-mechanics": "2. Protocol Mechanics & Worked Settlement Math",
+  "smart-contract-reference": "3. Smart Contract Reference",
+  "user-guides": "4. End-User Guides (Farmers & Buyers)",
+  "developer-guide": "5. Developer Guide, SDK & API Reference",
+  "contributing": "6. Contributing Guide"
+}

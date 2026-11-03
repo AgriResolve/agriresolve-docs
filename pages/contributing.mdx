@@ -1,0 +1,121 @@
+# Contributing Guide
+
+Contributions to AgriResolve are welcome. This guide details setup procedures, development workflows, and coding standards.
+
+---
+
+## Development Prerequisites
+
+Install the following software before working with the codebase:
+
+- **Node.js**: Version 20.0.0 or higher.
+- **pnpm**: Version 9.0.0 or higher.
+- **Rust**: Version 1.84+ stable toolchain.
+- **Wasm Target**: `rustup target add wasm32v1-none`
+- **Stellar CLI**: Install with `cargo install --locked stellar-cli`.
+
+---
+
+## Monorepo Layout
+
+AgriResolve is organized across three primary repositories:
+
+1. **`AgriResolve-app`**:
+   - `packages/sdk`: Official `@agriresolve/sdk` TypeScript client and XDR encoders.
+   - `apps/web`: Next.js 15 web application with Freighter wallet integration.
+   - `indexer`: Express API service, Soroban event poller, and automated dispute investigator.
+2. **`AgriResolve-contract`**:
+   - `contracts/registry`: Participant identity and commodity quality thresholds.
+   - `contracts/escrow`: SEP-41 token custody and split settlement payouts.
+   - `contracts/dispute`: Dispute dossier tracking and cross-contract arbitration.
+3. **`agriresolve-docs`**:
+   - Standalone Nextra documentation site.
+
+---
+
+## Local Development Commands
+
+### 1. Application & SDK Workspace (`AgriResolve-app`)
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build all monorepo packages
+pnpm build
+
+# Run unit tests
+pnpm test
+
+# Start web interface locally (http://localhost:3000)
+pnpm dev:web
+
+# Start indexer and oracle service (http://localhost:8000)
+pnpm dev:indexer
+```
+
+### 2. Smart Contracts Workspace (`AgriResolve-contract`)
+
+```bash
+# Run 18 smart contract unit tests
+cargo test
+
+# Verify Rust formatting
+cargo fmt --check
+
+# Run linter
+cargo clippy -- -D warnings
+
+# Build release WASM binaries
+stellar contract build
+```
+
+---
+
+## UI/UX Design Standards
+
+When contributing to `apps/web`, maintain the utilitarian design rules:
+
+- **Color Palette**:
+  - Primary Accent: Deep Forest Green (`#1E4D2B`)
+  - Warm Canvas Background: `#FAF9F5` (Landing) / `#F4F7F4` (Dashboard)
+  - Card Background: `#FFFFFF`
+  - Border Lines: Solid 1px `#D1D9D1`
+- **Typography & Styling**:
+  - Sans-serif font hierarchy.
+  - Zero glassmorphism (`backdrop-blur`).
+  - Zero rainbow, neon, or multi-stop gradients.
+  - Zero decorative floating drop shadows.
+- **Terminology**:
+  - Landing page text must prioritize agricultural terminology (bushels, metric tons, moisture deduction, weighbridge ticket) over crypto jargon.
+
+---
+
+## Commit Message Standards
+
+Use Conventional Commits:
+
+- `feat(contracts): add foreign matter deduction parameter`
+- `fix(sdk): correct bytes32 zero-padding in xdr encoder`
+- `docs(mechanics): add worked soybean settlement math`
+- `test(indexer): add zero-sum balance invariant check`
+- `chore(deps): update stellar-sdk to v13`
+
+---
+
+## Pull Request Requirements
+
+Before opening a pull request:
+
+1. Confirm all tests pass: `pnpm test` and `cargo test`.
+2. Confirm formatting and linting pass: `cargo fmt --check` and `pnpm lint`.
+3. Link the pull request to an existing issue in the issue tracker.
+4. Ensure commits focus on a single responsibility.
+
+---
+
+## Maintainers
+
+| Name | Role | GitHub | Telegram | Email |
+|:---|:---|:---|:---|:---|
+| **Hassan Korey** | Protocol Architect & Lead Developer | [@HassanKorey](https://github.com/HassanKorey) | [@HassanKorey](https://t.me/HassanKorey) | `edunhassan1006@gmail.com` |

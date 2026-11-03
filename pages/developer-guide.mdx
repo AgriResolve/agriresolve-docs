@@ -1,0 +1,300 @@
+# Developer Guide, SDK & API Reference
+
+This technical reference provides integration documentation for the AgriResolve TypeScript SDK (`@agriresolve/sdk`), the backend Indexer service (`indexer`), and Soroban RPC endpoints.
+
+---
+
+## SDK Installation & Configuration
+
+Install the SDK in your TypeScript or JavaScript application:
+
+```bash
+npm install @agriresolve/sdk @stellar/stellar-sdk
+# or with pnpm:
+pnpm add @agriresolve/sdk @stellar/stellar-sdk
+```
+
+### Network Configuration
+
+The SDK includes default configuration for Stellar Testnet:
+
+```typescript
+import { NetworkConfig, TESTNET_CONFIG } from "@agriresolve/sdk";
+
+export const TESTNET_CONFIG: NetworkConfig = {
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  registryContractId: "CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6",
+  escrowContractId: "CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC",
+  disputeContractId: "CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N",
+};
+```
+
+---
+
+## SDK Client Reference
+
+The package provides three primary client classes: `RegistryClient`, `EscrowClient`, and `DisputeClient`.
+
+### 1. `EscrowClient`
+
+Handles trade initialization, delivery confirmation, and split payout execution.
+
+```typescript
+import { EscrowClient } from "@agriresolve/sdk";
+import { Keypair } from "@stellar/stellar-sdk";
+
+const escrowClient = new EscrowClient();
+
+// 1. Read trade details
+const trade = await escrowClient.getTrade(1n);
+console.log(`Trade #1 State: ${trade.state}, Amount: ${trade.amount}`);
+
+// 2. Initialize a new trade escrow
+const buyerKeypair = Keypair.fromSecret("S...");
+const farmerAddress = "GDX712...";
+const arbiterAddress = "GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y";
+const tokenAddress = "CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK";
+const amount = 35000000000n; // $3,500.00 USDC
+const expiry = BigInt(Math.floor(Date.now() / 1000) + 86400 * 7); // 7 days
+
+const txHash = await escrowClient.initializeTrade(
+  buyerKeypair,
+  farmerAddress,
+  arbiterAddress,
+  tokenAddress,
+  amount,
+  expiry
+);
+console.log(`Trade initialized: tx ${txHash}`);
+
+// 3. Confirm physical delivery
+const farmerKeypair = Keypair.fromSecret("S...");
+const deliveryTicketHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+await escrowClient.confirmDelivery(farmerKeypair, 1n, deliveryTicketHash);
+```
+
+### 2. `RegistryClient`
+
+Queries commodity moisture standards, participant profiles, and token whitelists.
+
+```typescript
+import { RegistryClient, ParticipantRole } from "@agriresolve/sdk";
+
+const registryClient = new RegistryClient();
+
+// Query commodity moisture parameters
+const maizeSpec = await registryClient.getCommodity("MAIZE");
+console.log(`Base moisture: ${maizeSpec.baseMoistureBps} bps (${maizeSpec.baseMoistureBps / 100}%)`);
+console.log(`Max moisture: ${maizeSpec.maxMoistureBps} bps`);
+
+// Query participant active status
+const isActive = await registryClient.isParticipantActive("GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y");
+```
+
+### 3. `DisputeClient`
+
+Manages dispute dossiers, evidence attachments, and cross-contract resolution.
+
+```typescript
+import { DisputeClient } from "@agriresolve/sdk";
+import { Keypair } from "@stellar/stellar-sdk";
+
+const disputeClient = new DisputeClient();
+
+// 1. Submit evidence hash
+const buyerKeypair = Keypair.fromSecret("S...");
+const evidenceHash = "8d4e9b6c1234567890abcdef1234567890abcdef1234567890abcdef12345678";
+
+const evidenceIndex = await disputeClient.submitEvidence(
+  buyerKeypair,
+  1n, // disputeId
+  "MOISTURE",
+  evidenceHash
+);
+
+// 2. Resolve dispute (Oracle / Arbiter only)
+const arbiterKeypair = Keypair.fromSecret("S...");
+const resolutionHash = "a1b2c3d4...";
+
+await disputeClient.resolveDispute(
+  arbiterKeypair,
+  1n,
+  1592500000n,  // buyerShare ($159.25)
+  33407500000n, // farmerShare ($3,340.75)
+  resolutionHash
+);
+```
+
+---
+
+## Low-Level XDR Data Encoders
+
+The SDK provides direct type conversion helpers between native TypeScript types and Soroban `xdr.ScVal`:
+
+```typescript
+import {
+  addressToScVal,
+  bytes32ToScVal,
+  i128ToScVal,
+  u64ToScVal,
+  u32ToScVal,
+  symbolToScVal,
+  stringToScVal,
+  boolToScVal,
+  scValToNative,
+  sha256Digest,
+} from "@agriresolve/sdk";
+
+// Convert 32-byte digest to ScVal BytesN<32>
+const digest = sha256Digest("Weighbridge Gross Tare Ticket #WB-2026-9812");
+const scBytes = bytes32ToScVal(digest);
+
+// Decode ScVal back to native type
+const nativeValue = scValToNative(scBytes);
+```
+
+---
+
+## Indexer & AI Arbiter REST API
+
+The indexer service (`indexer`) runs an Express server on port `8000`.
+
+### Healthcheck
+```http
+GET /health
+```
+
+#### Response (`200 OK`)
+```json
+{
+  "status": "ok",
+  "service": "AgriResolve-Indexer & AI Oracle",
+  "timestamp": "2026-11-03T15:00:00.000Z",
+  "arbiterAddress": "GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y"
+}
+```
+
+---
+
+### Submit Dispute for Investigation
+```http
+POST /api/disputes/:escrowId/investigate
+Content-Type: application/json
+```
+
+#### Request Payload
+```json
+{
+  "disputeId": "1",
+  "autoSubmitOnChain": true,
+  "terms": {
+    "totalAmount": "35000000000",
+    "contractQuantityKg": 10000,
+    "contractPricePerKg": 0.35,
+    "baseMoistureBps": 1200,
+    "maxMoistureBps": 1450,
+    "deliveryToleranceBps": 500,
+    "shrinkageFactorBps": 125
+  },
+  "inspection": {
+    "deliveredQuantityKg": 10000,
+    "actualMoistureBps": 1600,
+    "foreignMatterBps": 150,
+    "brokenGrainBps": 200,
+    "weighbridgeTicketId": "WB-2026-9812",
+    "inspectorAddress": "GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y"
+  },
+  "evidenceList": [
+    {
+      "type": "MOISTURE",
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "description": "Grain Moisture Meter Calibrated Readout"
+    }
+  ]
+}
+```
+
+#### Response (`200 OK`)
+```json
+{
+  "report": {
+    "escrowId": "1",
+    "tradeAmount": "35000000000",
+    "buyerShare": "1592500000",
+    "farmerShare": "33407500000",
+    "buyerBps": 455,
+    "farmerBps": 9545,
+    "deliveredQuantityKg": 10000,
+    "adjustedQuantityKg": 9545.45,
+    "shrinkageLossKg": 454.55,
+    "isWithinTolerance": true,
+    "findings": [
+      "Delivered 10000 kg against contracted 10000 kg (Variance: 0.00 kg).",
+      "Weight variance is within allowable contractual tolerance of 5.00%.",
+      "Actual moisture 16.00% exceeded standard base moisture 12.00%. Minary shrinkage loss: 454.55 kg (4.55% deduction).",
+      "Final partition: Buyer refund 1592500000 units (4.55%), Farmer disbursement 33407500000 units (95.45%)."
+    ],
+    "resolutionHash": "d8e8fca2dc6451ef9464e8b3989c676d1600f72a44d0ab02a1b0cb34b46522c0",
+    "timestamp": 1793718000
+  },
+  "onChainResult": {
+    "txHash": "7f9c2d1b8e4a5f6e3c2d1b8e4a5f6e3c2d1b8e4a5f6e3c2d1b8e4a5f6e3c2d1b",
+    "status": "submitted"
+  }
+}
+```
+
+---
+
+### Fetch Cached Investigation Report
+```http
+GET /api/disputes/:escrowId/report
+```
+
+---
+
+## Event Poller Implementation
+
+The indexer runs `SorobanEventPoller` to listen for on-chain contract emissions:
+
+```typescript
+import { rpc, scValToNative } from "@stellar/stellar-sdk";
+import { TESTNET_CONFIG } from "@agriresolve/sdk";
+
+const server = new rpc.Server(TESTNET_CONFIG.rpcUrl);
+
+const res = await server.getEvents({
+  startLedger: 1250000,
+  filters: [
+    {
+      type: "contract",
+      contractIds: [
+        TESTNET_CONFIG.escrowContractId,
+        TESTNET_CONFIG.disputeContractId,
+      ],
+    },
+  ],
+  limit: 50,
+});
+```
+
+---
+
+## Running Test Suites
+
+Execute unit and integration tests across the codebase:
+
+```bash
+# 1. Smart contract Rust unit tests (18 tests)
+cd AgriResolve-contract
+cargo test
+
+# 2. SDK XDR and client tests
+cd AgriResolve-app
+pnpm --filter @agriresolve/sdk test
+
+# 3. Minary mathematical invariant tests
+pnpm --filter @agriresolve/indexer test
+```

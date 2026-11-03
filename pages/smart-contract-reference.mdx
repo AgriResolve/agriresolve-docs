@@ -1,0 +1,333 @@
+# Smart Contract Reference
+
+AgriResolve is implemented in three Soroban contracts compiled to the `wasm32v1-none` target using Rust 1.84+ and the Soroban SDK v22/v29.
+
+---
+
+## Deployment & Bytecode Profile
+
+| Contract Name | Stellar Testnet Address | Bytecode Size | Optimization Flags |
+|:---|:---|:---|:---|
+| `agriresolve-registry` | `CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6` | 9.7 KB | `opt-level = "z"`, `lto = true`, `panic = "abort"` |
+| `agriresolve-escrow` | `CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC` | 11.6 KB | `opt-level = "z"`, `lto = true`, `panic = "abort"` |
+| `agriresolve-dispute` | `CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N` | 12.5 KB | `opt-level = "z"`, `lto = true`, `panic = "abort"` |
+
+All contracts use persistent ledger storage. Data entries extend their time-to-live (TTL) on every mutation:
+- **`PERSISTENT_LIFETIME_THRESHOLD`**: 518,400 ledgers (~30 days).
+- **`PERSISTENT_BUMP_AMOUNT`**: 1,036,800 ledgers (~60 days).
+
+---
+
+## 1. Registry Contract (`agriresolve-registry`)
+
+Manages participant identities, authorized settlement tokens, and standardized crop quality parameters.
+
+### Data Types
+
+```rust
+#[repr(u32)]
+pub enum ParticipantRole {
+    Farmer = 0,
+    Buyer = 1,
+    Arbiter = 2,
+    QualityInspector = 3,
+}
+
+pub struct ParticipantProfile {
+    pub address: Address,
+    pub role: ParticipantRole,
+    pub metadata_uri: String,
+    pub is_active: bool,
+    pub registered_at: u64,
+}
+
+pub struct CommoditySpec {
+    pub commodity_id: Symbol,
+    pub base_moisture_bps: u32,
+    pub max_moisture_bps: u32,
+    pub max_tolerance_bps: u32,
+    pub shrinkage_factor_bps: u32,
+    pub is_active: bool,
+}
+```
+
+### Public Functions
+
+#### `initialize(env: Env, admin: Address) -> Result<(), ContractError>`
+Initializes the contract admin. Can only be invoked once.
+- **Auth**: `admin.require_auth()`
+- **Errors**: `AlreadyInitialized` (1)
+
+#### `set_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), ContractError>`
+Transfers contract administration to `new_admin`.
+- **Auth**: `caller.require_auth()`
+- **Errors**: `NotInitialized` (2), `Unauthorized` (3)
+
+#### `get_admin(env: Env) -> Result<Address, ContractError>`
+Returns the registered protocol admin address.
+
+#### `register_participant(env: Env, caller: Address, participant: Address, role: ParticipantRole, metadata_uri: String) -> Result<(), ContractError>`
+Registers or updates a participant profile. The caller must be either the protocol admin or the participant address.
+- **Auth**: `caller.require_auth()`
+- **Errors**: `Unauthorized` (3), `Overflow` (12)
+
+#### `update_participant_status(env: Env, caller: Address, participant: Address, is_active: bool) -> Result<(), ContractError>`
+Enables or suspends a participant profile.
+- **Auth**: `caller.require_auth()` (Must be admin)
+- **Errors**: `Unauthorized` (3), `ParticipantNotFound` (4)
+
+#### `get_participant(env: Env, participant: Address) -> Result<ParticipantProfile, ContractError>`
+Reads the profile for a given address.
+- **Errors**: `ParticipantNotFound` (4)
+
+#### `is_participant_active(env: Env, participant: Address) -> bool`
+Returns `true` if the participant profile exists and `is_active == true`.
+
+#### `is_participant_role(env: Env, participant: Address, role: ParticipantRole) -> bool`
+Returns `true` if the participant is active and matches the specified role.
+
+#### `get_participant_count(env: Env) -> u64`
+Returns total registered participants.
+
+#### `register_commodity(env: Env, caller: Address, commodity_id: Symbol, base_moisture_bps: u32, max_moisture_bps: u32, max_tolerance_bps: u32, shrinkage_factor_bps: u32) -> Result<(), ContractError>`
+Creates or updates a standardized commodity specification.
+- **Validation**: `base_moisture_bps <= max_moisture_bps` and `max_moisture_bps <= 10000`.
+- **Auth**: Admin only.
+- **Errors**: `Unauthorized` (3), `InvalidSpecification` (9)
+
+#### `get_commodity(env: Env, commodity_id: Symbol) -> Result<CommoditySpec, ContractError>`
+Retrieves moisture thresholds and shrinkage standards for a commodity symbol (e.g., `MAIZE`, `SOY`).
+- **Errors**: `CommodityNotFound` (7)
+
+#### `set_token_whitelist(env: Env, caller: Address, token: Address, is_approved: bool) -> Result<(), ContractError>`
+Whitelists or revokes an approved settlement token (such as USDC). Admin only.
+
+#### `is_token_approved(env: Env, token: Address) -> bool`
+Checks if a token address is approved for trade escrow deposits.
+
+### Registry Error Codes
+
+| Code | Variant | Reason |
+|:---|:---|:---|
+| `1` | `AlreadyInitialized` | Initialization function called more than once. |
+| `2` | `NotInitialized` | Storage read attempted before contract initialization. |
+| `3` | `Unauthorized` | Caller lacks admin or owner authorization. |
+| `4` | `ParticipantNotFound` | Participant address does not exist in storage. |
+| `5` | `ParticipantAlreadyExists` | Participant is already registered. |
+| `6` | `ParticipantInactive` | Profile has been suspended by the administrator. |
+| `7` | `CommodityNotFound` | Commodity symbol does not exist in registry. |
+| `8` | `CommodityAlreadyExists` | Commodity symbol is already defined. |
+| `9` | `InvalidSpecification` | Moisture thresholds exceed 10,000 bps or base exceeds maximum. |
+| `10` | `TokenNotWhitelisted` | Token address is not on the settlement whitelist. |
+| `11` | `ZeroAddress` | Invalid null or zero address provided. |
+| `12` | `Overflow` | Numeric overflow on participant index counter. |
+
+---
+
+## 2. Escrow Contract (`agriresolve-escrow`)
+
+Holds collateral funds using the SEP-41 Soroban token client and executes atomic split payouts.
+
+### Data Types
+
+```rust
+#[repr(u32)]
+pub enum EscrowState {
+    Funded = 0,
+    Delivered = 1,
+    Disputed = 2,
+    Resolved = 3,
+    Refunded = 4,
+}
+
+pub struct TradeDetails {
+    pub id: u64,
+    pub buyer: Address,
+    pub farmer: Address,
+    pub arbiter: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub state: EscrowState,
+    pub delivery_hash: Option<BytesN<32>>,
+    pub expiry: u64,
+    pub buyer_share: i128,
+    pub farmer_share: i128,
+    pub created_at: u64,
+}
+```
+
+### Public Functions
+
+#### `initialize_trade(env: Env, buyer: Address, farmer: Address, arbiter: Address, token: Address, amount: i128, expiry: u64) -> Result<u64, ContractError>`
+Creates a new trade escrow and executes `token::Client::transfer` from `buyer` to the contract.
+- **Preconditions**:
+  * `amount > 0`
+  * `buyer != farmer`
+  * `expiry > env.ledger().timestamp()`
+- **Auth**: `buyer.require_auth()`
+- **Returns**: New `trade_id: u64`
+- **Errors**: `InvalidAmount` (6), `IdenticalParties` (13), `InvalidExpiry` (14), `Overflow` (9)
+
+#### `confirm_delivery(env: Env, caller: Address, escrow_id: u64, delivery_hash: BytesN<32>) -> Result<(), ContractError>`
+Farmer confirms grain dispatch by committing a 32-byte sha256 digest of the weighbridge ticket.
+- **State Transition**: `Funded (0)` → `Delivered (1)`
+- **Auth**: `caller.require_auth()` (Must be registered `farmer`)
+- **Errors**: `TradeNotFound` (4), `Unauthorized` (3), `InvalidState` (5), `TradeExpired` (7)
+
+#### `flag_dispute(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError>`
+Locks escrow funds on delivery dispute. Caller must be the buyer, farmer, or authorized dispute contract.
+- **State Transition**: `Funded (0)` or `Delivered (1)` → `Disputed (2)`
+- **Auth**: `caller.require_auth()`
+- **Errors**: `TradeNotFound` (4), `Unauthorized` (3), `InvalidState` (5)
+
+#### `execute_resolution(env: Env, caller: Address, escrow_id: u64, buyer_share: i128, farmer_share: i128) -> Result<(), ContractError>`
+Executes token transfers to the buyer and farmer according to the audited split.
+- **State Transition**: `Disputed (2)` → `Resolved (3)`
+- **Auth**: `caller.require_auth()` (Caller must be designated `arbiter` or authorized `dispute_contract`)
+- **Validation**:
+  * `buyer_share >= 0 && farmer_share >= 0`
+  * `buyer_share + farmer_share == trade.amount`
+- **Errors**: `TradeNotFound` (4), `Unauthorized` (3), `InvalidState` (5), `InvalidAmount` (6), `SplitMismatch` (8)
+
+#### `refund_trade(env: Env, caller: Address, escrow_id: u64) -> Result<(), ContractError>`
+Refunds 100% of the deposited tokens to the buyer if goods were not dispatched prior to expiration or by mutual agreement.
+- **State Transition**: `Funded (0)` → `Refunded (4)`
+- **Auth**: `caller.require_auth()` (`buyer` or `farmer`)
+- **Errors**: `TradeNotFound` (4), `Unauthorized` (3), `InvalidState` (5)
+
+#### `get_trade(env: Env, escrow_id: u64) -> Result<TradeDetails, ContractError>`
+Reads full trade state from storage.
+
+#### `get_trade_count(env: Env) -> u64`
+Returns total count of trade escrows initiated.
+
+### Escrow Error Codes
+
+| Code | Variant | Reason |
+|:---|:---|:---|
+| `1` | `AlreadyInitialized` | Escrow admin already configured. |
+| `2` | `NotInitialized` | Escrow admin has not been set. |
+| `3` | `Unauthorized` | Caller is not a participant, arbiter, or linked dispute contract. |
+| `4` | `TradeNotFound` | `escrow_id` does not exist in storage. |
+| `5` | `InvalidState` | State machine transition disallowed from current state. |
+| `6` | `InvalidAmount` | Deposit amount is zero or split share is negative. |
+| `7` | `TradeExpired` | Attempted delivery confirmation past trade expiration. |
+| `8` | `SplitMismatch` | `buyer_share + farmer_share != trade.amount`. |
+| `9` | `Overflow` | Integer overflow during balance or counter computation. |
+| `10` | `AlreadyDelivered` | Delivery confirmation already executed for this escrow. |
+| `11` | `DisputeLocked` | Operation blocked because trade is in `Disputed` state. |
+| `12` | `ZeroAddress` | Null address provided. |
+| `13` | `IdenticalParties` | Buyer address and farmer address are identical. |
+| `14` | `InvalidExpiry` | Trade expiry timestamp is in the past. |
+
+---
+
+## 3. Dispute Contract (`agriresolve-dispute`)
+
+Maintains evidence dossiers, tracks arbitration status, and invokes cross-contract settlement calls to `agriresolve-escrow`.
+
+### Data Types
+
+```rust
+#[repr(u32)]
+pub enum DisputeStatus {
+    Pending = 0,
+    UnderReview = 1,
+    Resolved = 2,
+    Dismissed = 3,
+}
+
+pub struct DisputeRecord {
+    pub dispute_id: u64,
+    pub escrow_id: u64,
+    pub claimant: Address,
+    pub complaint_hash: BytesN<32>,
+    pub arbiter: Address,
+    pub status: DisputeStatus,
+    pub evidence_count: u32,
+    pub buyer_share: i128,
+    pub farmer_share: i128,
+    pub resolution_hash: Option<BytesN<32>>,
+    pub created_at: u64,
+    pub resolved_at: u64,
+}
+
+pub struct EvidenceRecord {
+    pub index: u32,
+    pub submitter: Address,
+    pub evidence_type: Symbol,
+    pub evidence_hash: BytesN<32>,
+    pub submitted_at: u64,
+}
+```
+
+### Public Functions
+
+#### `raise_dispute(env: Env, caller: Address, escrow_id: u64, arbiter: Address, complaint_hash: BytesN<32>) -> Result<u64, ContractError>`
+Opens a dispute dossier and calls `agriresolve-escrow::flag_dispute` via cross-contract call.
+- **Auth**: `caller.require_auth()`
+- **Errors**: `DisputeAlreadyExists` (5), `NotInitialized` (2)
+
+#### `submit_evidence(env: Env, caller: Address, dispute_id: u64, evidence_type: Symbol, evidence_hash: BytesN<32>) -> Result<u32, ContractError>`
+Appends a 32-byte cryptographic proof (weighbridge ticket, moisture sensor log, lab assay) to the dispute dossier.
+- **Limit**: Maximum 20 evidence items per dispute dossier.
+- **Auth**: `caller.require_auth()`
+- **Errors**: `DisputeNotFound` (4), `InvalidDisputeState` (6), `EvidenceLimitExceeded` (9)
+
+#### `resolve_dispute(env: Env, caller: Address, dispute_id: u64, buyer_share: i128, farmer_share: i128, resolution_hash: BytesN<32>) -> Result<(), ContractError>`
+Executes final settlement. Caller must be the designated `arbiter`. Invokes `agriresolve-escrow::execute_resolution` cross-contract to release tokens.
+- **State Transition**: `Pending (0)` or `UnderReview (1)` → `Resolved (2)`
+- **Auth**: `caller.require_auth()` (Must match `dispute.arbiter`)
+- **Errors**: `DisputeNotFound` (4), `Unauthorized` (3), `InvalidDisputeState` (6), `InvalidSplit` (8)
+
+#### `dismiss_dispute(env: Env, caller: Address, dispute_id: u64) -> Result<(), ContractError>`
+Dismisses frivolous complaints without modifying the escrow. Arbiter only.
+- **State Transition**: → `Dismissed (3)`
+
+#### `get_dispute(env: Env, dispute_id: u64) -> Result<DisputeRecord, ContractError>`
+Returns full dispute dossier by dispute ID.
+
+#### `get_dispute_by_escrow(env: Env, escrow_id: u64) -> Result<u64, ContractError>`
+Looks up dispute ID associated with a given escrow ID.
+
+#### `get_evidence(env: Env, dispute_id: u64, index: u32) -> Result<EvidenceRecord, ContractError>`
+Reads specific evidence record from dossier.
+
+### Dispute Error Codes
+
+| Code | Variant | Reason |
+|:---|:---|:---|
+| `1` | `AlreadyInitialized` | Dispute contract admin already initialized. |
+| `2` | `NotInitialized` | Escrow link or admin missing. |
+| `3` | `Unauthorized` | Caller does not match arbiter address. |
+| `4` | `DisputeNotFound` | Dispute record not found in storage. |
+| `5` | `DisputeAlreadyExists` | Escrow ID already has an open dispute. |
+| `6` | `InvalidDisputeState` | Dispute is already resolved or dismissed. |
+| `7` | `EscrowNotFound` | Linked escrow contract query returned null. |
+| `8` | `InvalidSplit` | Negative buyer or farmer share provided. |
+| `9` | `EvidenceLimitExceeded` | More than 20 evidence items submitted. |
+| `10` | `ZeroAddress` | Null address argument provided. |
+| `11` | `EscrowCallFailed` | Cross-contract invocation to `agriresolve-escrow` failed. |
+| `12` | `Overflow` | Counter arithmetic overflow. |
+
+---
+
+## Contract Events Reference (`#[contractevent]`)
+
+All contracts emit type-safe indexed events using the Soroban SDK macro:
+
+| Contract | Event Name | Topics | Data Payload |
+|:---|:---|:---|:---|
+| `registry` | `ParticipantRegistered` | `Symbol("ParticipantRegistered")`, `participant: Address` | `(role: u32, metadata_uri: String)` |
+| `registry` | `ParticipantStatusUpdated` | `Symbol("ParticipantStatusUpdated")`, `participant: Address` | `is_active: bool` |
+| `registry` | `CommoditySpecRegistered` | `Symbol("CommoditySpecRegistered")`, `commodity_id: Symbol` | `(base_moisture_bps: u32, max_moisture_bps: u32)` |
+| `registry` | `TokenWhitelistUpdated` | `Symbol("TokenWhitelistUpdated")`, `token: Address` | `is_approved: bool` |
+| `escrow` | `TradeInitialized` | `Symbol("TradeInitialized")`, `trade_id: u64` | `(buyer: Address, farmer: Address, token: Address, amount: i128, expiry: u64)` |
+| `escrow` | `DeliveryConfirmed` | `Symbol("DeliveryConfirmed")`, `trade_id: u64` | `(farmer: Address, delivery_hash: BytesN<32>)` |
+| `escrow` | `DisputeFlagged` | `Symbol("DisputeFlagged")`, `trade_id: u64` | `caller: Address` |
+| `escrow` | `ResolutionExecuted` | `Symbol("ResolutionExecuted")`, `trade_id: u64` | `(arbiter: Address, buyer_share: i128, farmer_share: i128)` |
+| `escrow` | `TradeRefunded` | `Symbol("TradeRefunded")`, `trade_id: u64` | `(recipient: Address, amount: i128)` |
+| `dispute` | `DisputeOpened` | `Symbol("DisputeOpened")`, `dispute_id: u64` | `(escrow_id: u64, claimant: Address, complaint_hash: BytesN<32>)` |
+| `dispute` | `EvidenceSubmitted` | `Symbol("EvidenceSubmitted")`, `dispute_id: u64` | `(evidence_index: u32, submitter: Address, evidence_type: Symbol, evidence_hash: BytesN<32>)` |
+| `dispute` | `DisputeResolved` | `Symbol("DisputeResolved")`, `dispute_id: u64` | `(escrow_id: u64, arbiter: Address, buyer_share: i128, farmer_share: i128, resolution_hash: BytesN<32>)` |
+| `dispute` | `DisputeDismissed` | `Symbol("DisputeDismissed")`, `dispute_id: u64` | `(escrow_id: u64, arbiter: Address)` |

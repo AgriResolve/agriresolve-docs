@@ -1,0 +1,236 @@
+# Protocol Mechanics & Worked Settlement Math
+
+AgriResolve calculates trade settlements deterministically. All settlement calculations execute using integer basis points (1 bps = 0.01%) to prevent floating-point inaccuracies on-chain.
+
+---
+
+## The Escrow State Machine
+
+The escrow contract (`agriresolve-escrow`, `CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC`) enforces five discrete operational states:
+
+```
+               [initialize_trade]
+                       |
+                       v
+                 +------------+
+                 |  0: FUNDED |
+                 +------------+
+                   |        |
+    [confirm_delivery]    [refund_trade (expired / mutual)]
+                   |        |
+                   v        v
+            +--------------+  +---------------+
+            | 1: DELIVERED |  |  4: REFUNDED  |
+            +--------------+  +---------------+
+                   |
+            [flag_dispute / raise_dispute]
+                   |
+                   v
+            +--------------+
+            | 2: DISPUTED  |
+            +--------------+
+                   |
+            [execute_resolution]
+                   |
+                   v
+            +--------------+
+            | 3: RESOLVED  |
+            +--------------+
+```
+
+### State Definitions
+
+| Code | State Name | Description | Valid Trigger Functions |
+|:---|:---|:---|:---|
+| `0` | **Funded** | Buyer deposits total token amount into contract custody. | `confirm_delivery`, `refund_trade`, `flag_dispute` |
+| `1` | **Delivered** | Farmer registers delivery hash of physical grain arrival. | `flag_dispute`, `execute_resolution` |
+| `2` | **Disputed** | Trade is locked pending evidence and arbitration. | `execute_resolution` |
+| `3` | **Resolved** | Split disbursement executed between buyer and farmer. | Terminal state |
+| `4` | **Refunded** | Full principal returned to buyer due to cancellation or expiry. | Terminal state |
+
+---
+
+## Basis-Point Arithmetic & Conservation Invariant
+
+A basis point (bps) represents one hundredth of one percent:
+
+```text
+1 bps      = 0.0001 = 0.01%
+10,000 bps = 1.0000 = 100.00%
+```
+
+### Conservation Law
+For every trade settled on AgriResolve, the sum of split basis points and disbursed tokens must satisfy strict zero-sum conservation:
+
+```text
+BuyerBps + FarmerBps = 10,000 bps
+
+BuyerShare  = floor((TotalAmount * BuyerBps) / 10,000)
+FarmerShare = TotalAmount - BuyerShare
+
+BuyerShare + FarmerShare == TotalAmount
+```
+
+The contract verifies that `buyer_share + farmer_share == trade.amount`. If the split diverges by even 1 stroop, the contract halts execution with error `ContractError::SplitMismatch` (code `8`).
+
+---
+
+## Moisture Shrinkage Formula (Minary Standard)
+
+Commercial grain trading standards (USDA and regional trade boards) account for water loss during drying through the Minary Grain Shrinkage equation. The calculation preserves dry matter equivalence between the delivered grain and the contractual baseline:
+
+```text
+Delivered Dry Matter Factor = 10,000 - ActualMoistureBps
+Base Dry Matter Factor      = 10,000 - BaseMoistureBps
+
+Adjusted Delivered Weight (W_adj) = DeliveredWeight * ((10,000 - ActualMoistureBps) / (10,000 - BaseMoistureBps))
+
+Shrinkage Loss (kg) = DeliveredWeight - W_adj
+
+Moisture Penalty (bps) = min(10,000, round((Shrinkage Loss / DeliveredWeight) * 10,000))
+```
+
+If `ActualMoistureBps <= BaseMoistureBps`, no moisture deduction applies (`Moisture Penalty = 0 bps`).
+
+---
+
+## Quantity Variance & Shortfall Deduction
+
+Every commodity profile registered in `agriresolve-registry` includes a delivery tolerance limit (`ToleranceBps`):
+
+```text
+Allowable Shortfall (kg) = ContractWeight * (ToleranceBps / 10,000)
+Delivered Variance (kg)  = DeliveredWeight - ContractWeight
+```
+
+If the delivery falls short of the contracted weight beyond the permitted tolerance:
+
+```text
+Net Shortfall (kg) = abs(DeliveredWeight - ContractWeight) - Allowable Shortfall
+Shortfall Penalty (bps) = min(10,000, round((Net Shortfall / ContractWeight) * 10,000))
+```
+
+If the weight difference is within tolerance, or if the farmer delivers excess produce, no shortfall penalty is charged.
+
+---
+
+## Worked Settlement Calculations
+
+### Scenario 1: White Maize Delivery with High Moisture
+- **Escrow ID**: `1`
+- **Commodity**: White Maize (`MAIZE`)
+- **Contract Quantity**: 10,000 kg
+- **Contract Price**: $0.35 / kg
+- **Total Escrow Amount**: $3,500.00 USDC (35,000,000,000 stroops / 7-decimal units)
+- **Base Moisture**: 12.00% (1,200 bps)
+- **Max Permitted Moisture**: 14.50% (1,450 bps)
+- **Tolerance**: 5.00% (500 bps = 500 kg)
+- **Delivered Quantity**: 10,000 kg (no weight shortfall)
+- **Actual Moisture**: 16.00% (1,600 bps)
+
+```text
+Step 1: Check delivery tolerance
+Variance = 10,000 kg - 10,000 kg = 0 kg
+Shortfall Penalty = 0 bps
+
+Step 2: Minary Dry Matter Ratio
+Delivered Dry Matter = 10,000 - 1,600 = 8,400 bps
+Base Dry Matter      = 10,000 - 1,200 = 8,800 bps
+Ratio = 8,400 / 8,800 = 0.954545...
+
+Step 3: Adjusted Net Grain Weight
+W_adj = 10,000 kg * 0.954545 = 9,545.45 kg
+Shrinkage Loss = 10,000 kg - 9,545.45 kg = 454.55 kg
+
+Step 4: Moisture Deduction Basis Points
+Moisture Penalty = (454.55 / 10,000) * 10,000 = 455 bps (4.55%)
+
+Step 5: Final Split
+Buyer Bps  = 455 bps
+Farmer Bps = 10,000 - 455 = 9,545 bps
+
+Step 6: Payout Disbursement
+Buyer Refund       = (35,000,000,000 * 455) / 10,000 = 1,592,500,000 ($159.25 USDC)
+Farmer Disbursement= 35,000,000,000 - 1,592,500,000  = 33,407,500,000 ($3,340.75 USDC)
+Conservation Check: 1,592,500,000 + 33,407,500,000  = 35,000,000,000 (Exact Match)
+```
+
+---
+
+### Scenario 2: Soybean Contract with Compound Shortfall and Wet Grain
+- **Escrow ID**: `2`
+- **Commodity**: Commercial Soybeans (`SOY`)
+- **Contract Quantity**: 25,000 kg
+- **Contract Price**: $0.40 / kg
+- **Total Escrow Amount**: $10,000.00 USDC (100,000,000,000 stroops)
+- **Base Moisture**: 12.50% (1,250 bps)
+- **Tolerance**: 3.00% (300 bps = 750 kg)
+- **Delivered Quantity**: 22,500 kg (gross deficit of 2,500 kg)
+- **Actual Moisture**: 15.50% (1,550 bps)
+
+```text
+Step 1: Quantity Shortfall Deduction
+Contract Weight      = 25,000 kg
+Delivered Weight     = 22,500 kg
+Gross Shortfall      = 2,500 kg
+Allowable Tolerance  = 25,000 * (300 / 10,000) = 750 kg
+Net Shortfall        = 2,500 kg - 750 kg = 1,750 kg
+Shortfall Penalty    = (1,750 / 25,000) * 10,000 = 700 bps (7.00%)
+
+Step 2: Moisture Shrinkage on Delivered Goods
+Delivered Dry Matter = 10,000 - 1,550 = 8,450 bps
+Base Dry Matter      = 10,000 - 1,250 = 8,750 bps
+Dry Matter Ratio     = 8,450 / 8,750 = 0.965714...
+
+W_adj = 22,500 kg * (8,450 / 8,750) = 21,728.57 kg
+Shrinkage Loss = 22,500 kg - 21,728.57 kg = 771.43 kg
+Moisture Penalty = (771.43 / 22,500) * 10,000 = 343 bps (3.43%)
+
+Step 3: Aggregated Split Calculation
+Buyer Bps  = 700 bps + 343 bps = 1,043 bps (10.43%)
+Farmer Bps = 10,000 - 1,043    = 8,957 bps (89.57%)
+
+Step 4: On-Chain Settlement Payout
+Buyer Refund       = (100,000,000,000 * 1,043) / 10,000 = 10,430,000,000 ($1,043.00 USDC)
+Farmer Disbursement= 100,000,000,000 - 10,430,000,000   = 89,570,000,000 ($8,957.00 USDC)
+Conservation Check: 10,430,000,000 + 89,570,000,000     = 100,000,000,000 (Exact Match)
+```
+
+---
+
+### Scenario 3: Complete Non-Delivery or Spoilage Rejection
+- **Escrow ID**: `3`
+- **Contract Quantity**: 50,000 kg
+- **Total Escrow Amount**: $15,000.00 USDC
+- **Delivered Quantity**: 0 kg (or grain completely molded and rejected on arrival)
+
+```text
+Buyer Bps  = 10,000 bps (100.00%)
+Farmer Bps = 0 bps (0.00%)
+
+Buyer Refund       = $15,000.00 USDC
+Farmer Disbursement= $0.00 USDC
+```
+
+---
+
+## Cryptographic Evidence Hashing
+
+When the AI Arbiter indexer audits evidence dossiers, it commits a 32-byte SHA-256 hash to `agriresolve-dispute` (`resolve_dispute`):
+
+```typescript
+const reportPayload = JSON.stringify({
+  escrowId: terms.escrowId.toString(),
+  totalAmount: totalAmount.toString(),
+  buyerShare: buyerShare.toString(),
+  farmerShare: farmerShare.toString(),
+  buyerBps,
+  farmerBps,
+  findings,
+  evidenceHashes: evidenceList.map((e) => e.hash),
+});
+
+const resolutionHash = createHash("sha256").update(reportPayload).digest("hex");
+```
+
+This hash is permanently stored in `DisputeRecord.resolution_hash` on Stellar Testnet, linking the on-chain payout to the inspection data.

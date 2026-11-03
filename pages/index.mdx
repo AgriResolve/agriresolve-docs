@@ -1,0 +1,112 @@
+# AgriResolve Protocol
+
+AgriResolve is an on-chain agricultural trade finance, commodity registry, and automated dispute resolution protocol built on Stellar Soroban. The protocol replaces informal credit arrangements and manual paper settlements with deterministic escrow contracts and automated quality arbitration.
+
+---
+
+## The Problem and Market Scale
+
+Agricultural commodity trade exceeds $1.5 trillion in annual global volume. Across developing economies and emerging market trade corridors, smallholder farmers and commercial buyers conduct spot transactions under high counterparty uncertainty.
+
+```
+Traditional Settlement Timeline (30 to 90 Days):
+[Contract Agreed] ---> [Grain Dispatched] ---> [Weighbridge Arrival] ---> [Manual Dispute] ---> [Delayed Discounted Payout]
+                                                                                |
+                                                                                +--> 15% to 22% of loads discounted arbitrarily
+
+AgriResolve Settlement Timeline (< 5 Seconds):
+[Buyer Escrow Locked] ---> [Grain Dispatched] ---> [Weighbridge & Moisture Sensor] ---> [Deterministic Settlement Split]
+```
+
+### 1. Extended Settlement Cycles
+In traditional agricultural supply chains, farmers deliver physical grain to commercial aggregators or processing mills and wait 30 to 90 days for bank transfers. During this payment window, farmers bear full credit risk while financing operational costs for subsequent planting seasons.
+
+### 2. High Dispute Frequency
+Data from regional grain trading boards indicates that 15% to 22% of bulk grain deliveries face dispute on arrival at receiving elevators. Disputes center on three physical metrics:
+- **Excess Moisture**: Wet grain increases spoilage risks in storage bins and requires mechanical drying.
+- **Weight Shortfall**: Delivery truck weighbridge readings differ from loading scales.
+- **Foreign Matter & Broken Kernels**: Impurities that reduce the commercial grade of the shipment.
+
+### 3. Unilateral Off-Take Discounts
+Because commercial off-takers control the physical unloading bay and the testing laboratory, farmers have no leverage when a buyer reports high moisture or weight shortfall. Buyers frequently enforce arbitrary price deductions between 10% and 30%, or reject entire truckloads after transport costs have already been incurred.
+
+### 4. Counterparty Risk for Off-Takers
+Off-takers face non-performance risks when issuing cash advances to aggregators. If crop yields drop or market prices increase post-contract, sellers may divert deliveries to local spot markets, leaving advance payments unrecovered.
+
+---
+
+## The AgriResolve Solution
+
+AgriResolve replaces discretionary negotiations with immutable smart contracts deployed on the Stellar network:
+
+1. **Collateralized Escrow**: The buyer deposits 100% of the trade value into an on-chain escrow contract before harvest collection or transportation commences.
+2. **Cryptographic Delivery Audits**: When dispatching goods, the farmer commits a 32-byte cryptographic digest of the physical bill of lading or weighbridge ticket directly to the ledger.
+3. **Minary Shrinkage Standardization**: When moisture or quantity discrepancies arise, the protocol computes deductions using the standard Minary Grain Shrinkage equation. Calculations resolve to the exact basis point (1 bps = 0.01%).
+4. **Low Cost and Predictable Finality**: Transactions settle in approximately 5 seconds on Stellar Soroban, with fixed transaction fees of 100 stroops ($0.00001 per transaction).
+
+---
+
+## Deployed Stellar Testnet Contracts
+
+The AgriResolve protocol operates on the Stellar Testnet using Soroban Protocol 22/29. All contracts are live, initialized, and linked:
+
+| Contract Name | Contract Identifier | Stellar.Expert Explorer | Network Status |
+|:---|:---|:---|:---|
+| **agriresolve-registry** | `CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6` | [Inspect on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CC3OJZP4DCYOOTRJTT66UHMAGR2677JNDBNFQYMREQA2ONDWNRAO75J6) | Active |
+| **agriresolve-escrow** | `CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC` | [Inspect on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC) | Active |
+| **agriresolve-dispute** | `CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N` | [Inspect on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N) | Active |
+| **Testnet USDC Token** | `CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK` | [Inspect on Stellar.Expert](https://stellar.expert/explorer/testnet/contract/CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK) | Active |
+
+**Administrative Multi-Signature Key**: `GCBOKYT7TAARXDILFZ43QX2WWIRHAWA2S3V3ZP7EWN4KWTDIBS3NQS4Y`
+
+---
+
+## System Architecture
+
+The protocol separates responsibilities across three smart contracts, an off-chain automated investigation engine, and a web application interface:
+
+```
++-----------------------------------------------------------------------------------+
+|                                  USER INTERFACE                                   |
+|   Farmer / Commodity Buyer (Freighter Wallet / Keypair Authentication)            |
++-----------------------------------------------------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+|                        @agriresolve/sdk (TypeScript)                              |
+|   Transaction Building - ScVal XDR Encoders - Simulation Pre-flights              |
++-----------------------------------------------------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+|                      STELLAR SOROBAN PROTOCOL 22/29 RPC                           |
+|   https://soroban-testnet.stellar.org (Network: Test SDF Network ; September 2015)|
++-----------------------------------------------------------------------------------+
+             |                                 |                                 |
+             v                                 v                                 v
++--------------------------+     +--------------------------+     +--------------------------+
+|   agriresolve-registry   |     |    agriresolve-escrow    |     |   agriresolve-dispute    |
+|   Participant Roles      |     |  SEP-41 Token Custody    |<--->|   Dossier Management     |
+|   Commodity Standards    |     |  State Machine           |     |   Evidence Digests       |
+|   Token Whitelist        |     |  Split Disbursements     |     |   Cross-Contract Calls   |
++--------------------------+     +--------------------------+     +--------------------------+
+                                               ^                               ^
+                                               |                               |
+                               +-----------------------------------------------+
+                               |
++-----------------------------------------------------------------------------------+
+|                     AGRIRESOLVE INDEXER & ORACLE SERVICE                          |
+|   - Event Poller: Listens to #[contractevent] emissions                           |
+|   - Minary Shrinkage Calculator: Computes basis-point settlement shares          |
+|   - Oracle Signer: Dispatches signed resolve_dispute transactions                 |
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## Audience Scope
+
+This documentation serves two audiences:
+
+1. **Agricultural Producers & Commercial Buyers**: Non-technical market participants seeking clear operational workflows for funding escrows, dispatching grain, providing delivery proofs, and receiving funds.
+2. **Soroban Protocol Auditors & Grant Reviewers**: Technical engineers requiring formal verification of contract storage layouts, error handling matrices, XDR serialization standards, and mathematical proofs of fund conservation.

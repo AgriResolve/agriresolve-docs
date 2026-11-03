@@ -1,0 +1,165 @@
+# End-User Guides: Farmers & Buyers
+
+This guide provides operational instructions for agricultural producers, grain elevator managers, and commodity buyers using the AgriResolve application.
+
+---
+
+## Participant Roles
+
+AgriResolve supports two primary user roles during registration:
+
+1. **Farmer / Aggregator**: The agricultural seller who produces, bags, or bulks grain, organizes transport, and delivers physical produce to the buyer facility.
+2. **Buyer / Processor**: The commercial off-taker (mill, animal feed producer, or food manufacturer) who locks purchase collateral and receives physical grain at the weighbridge.
+
+> Note: Arbiters are designated institutional grain inspection authorities or the protocol's automated AI Arbiter Oracle (`indexer`). General users cannot register as arbiters.
+
+---
+
+## Initial Setup & Digital Signature Key
+
+AgriResolve uses the **Freighter** digital signature extension to authorize trade agreements.
+
+1. **Install Freighter**: Install the Freighter browser extension from `https://www.freighter.app/` on Chrome, Firefox, or Brave.
+2. **Switch to Testnet**:
+   - Open Freighter settings.
+   - Switch network selection from **Public** to **Testnet**.
+   - Verify RPC is set to `https://soroban-testnet.stellar.org`.
+3. **Fund Your Account**:
+   - Copy your Stellar public address (starts with `G...`).
+   - Fund your test address with testnet XLM using the Stellar Laboratory Friendbot at `https://laboratory.stellar.org/#account-creator?network=testnet`.
+4. **Connect to AgriResolve**:
+   - Navigate to the AgriResolve Web Application.
+   - Click **Connect Wallet** in the top navigation bar.
+   - Confirm connection in the Freighter popup.
+   - Navigate to `/signup` and select your role (**Farmer** or **Buyer**).
+
+---
+
+## Guide for Buyers: Creating a Trade Escrow
+
+Buyers protect their purchase capital by placing funds into escrow before trucks are dispatched from farms.
+
+```
+Buyer Workflow:
+[Enter Contract Terms] ---> [Approve USDC Collateral] ---> [Deposit to Escrow] ---> [Escrow Status: FUNDED]
+```
+
+### Step 1: Initiate Trade
+1. Navigate to the **Dashboard** (`/dashboard`).
+2. Click **Create New Trade Agreement**.
+3. Complete the required trade agreement fields:
+   - **Farmer Address**: The Stellar address of your counterparty (e.g., `GCBOKYT7...`).
+   - **Commodity Type**: Select standard commodity symbol (e.g., `MAIZE` or `SOY`).
+   - **Contract Weight (kg)**: Physical grain weight (e.g., `10000`).
+   - **Price Per Kilogram**: Unit purchase price (e.g., `0.35 USDC`).
+   - **Total Escrow Amount**: Automatically calculated (e.g., `3500.00 USDC`).
+   - **Delivery Deadline**: Maximum allowed delivery date and time.
+4. Designated Settlement Token: Testnet USDC (`CCQGOTGN6HTQE74XYERYSYVU57T5NPYWV5DLCROMB56OXTV6RSO6KIGK`).
+
+### Step 2: Sign Deposit Transaction
+1. Click **Lock Escrow Collateral**.
+2. Freighter opens a transaction approval dialog invoking `initialize_trade` on `agriresolve-escrow` (`CCPZFPNUQGNT5O6H3VWT2H23CLXF2POF5QYDAD4HPOB2RRKSHO63OIXC`).
+3. Review parameters and click **Approve**.
+4. The dashboard updates to display Escrow State **0: Funded**.
+
+---
+
+## Guide for Farmers: Dispatching Produce & Confirming Delivery
+
+Farmers receive guaranteed payment protection once the buyer locks escrow collateral.
+
+```
+Farmer Workflow:
+[Verify Escrow Funded] ---> [Load & Weigh Grain] ---> [Input Weighbridge Ticket] ---> [Escrow Status: DELIVERED]
+```
+
+### Step 1: Verify Collateral Lock
+1. Open the **Dashboard** and locate the trade ID assigned by the buyer.
+2. Confirm the stepper status displays **Funded**. Never dispatch grain if the trade status remains unconfirmed.
+
+### Step 2: Dispatch and Submit Proof of Delivery
+1. Weigh your truck at the certified departure weighbridge.
+2. Transport grain to the buyer receiving silo or storage elevator.
+3. Obtain the certified weighbridge delivery ticket (e.g., `Ticket #WB-2026-9812`).
+4. On your AgriResolve Dashboard, select the active trade and click **Confirm Delivery**.
+5. Enter the weighbridge ticket number and certified weight.
+6. The application calculates the 32-byte SHA-256 hash of the delivery ticket.
+7. Click **Submit Delivery Confirmation** and authorize the transaction via Freighter.
+8. Escrow state transitions to **1: Delivered**.
+
+---
+
+## Delivery Acceptance (Happy Path)
+
+When grain arrives within contract moisture and weight limits:
+1. The receiving elevator samples the grain and confirms:
+   - Delivered weight matches contract volume within tolerance (e.g. 10,000 kg ± 5.00%).
+   - Moisture meter reports grain at or below base standard (e.g. 12.00%).
+2. The buyer clicks **Accept Delivery & Release Escrow**.
+3. The escrow contract disburses 100% of the collateral directly to the farmer address in 5 seconds.
+4. Trade state updates to **3: Resolved**.
+
+---
+
+## Dispute Escalation & Evidence Upload (Unhappy Path)
+
+If arriving grain fails quality standards, the buyer or farmer can trigger an automated audit.
+
+```
+Dispute Workflow:
+[Flag Dispute] ---> [Upload Sensor/Scale Evidence] ---> [AI Arbiter Audits via Minary] ---> [Atomic Split Settlement]
+```
+
+### Step 1: Open Dispute Dossier
+1. In the Dashboard, open the trade record and click **Raise Trade Dispute**.
+2. Enter the dispute reason (e.g., `Excess Moisture: 16.00% vs 12.00% contractual base`).
+3. Authorize the `raise_dispute` transaction on `agriresolve-dispute` (`CCBQBMQFQPRRMOQLPNYSIBGTL7AOXXQAAIADXE2YYTZHSUSDS6Z4ES5N`).
+4. The escrow immediately locks funds. Neither party can withdraw collateral unilaterally.
+
+### Step 2: Submit Digital Evidence
+Use the built-in **Evidence Uploader** panel:
+- **Evidence Type**:
+  - `WEIGHT`: Weighbridge scale gross/tare tickets.
+  - `MOISTURE`: Calibrated benchtop moisture meter readouts.
+  - `QUALITY`: Laboratory certificates detailing foreign matter or damaged kernels.
+- The web app generates a 32-byte hash for each attachment and calls `submit_evidence`.
+
+### Step 3: Automated Audit and Split Settlement
+1. The background Oracle service detects the dispute and ingests trade parameters and laboratory readings.
+2. The engine computes the Minary shrinkage adjustment:
+   - Excess moisture above 12.00% is converted into kilograms of lost dry matter.
+   - Deduction basis points are calculated.
+3. The Oracle signs `resolve_dispute` using its administrative key.
+4. The smart contract executes token transfers simultaneously:
+   - **Buyer** receives refund for lost water weight.
+   - **Farmer** receives full payment for net delivered dry grain.
+5. The dispute dossier closes with status **Resolved**.
+
+---
+
+## User Interface Reference
+
+The AgriResolve web interface (`apps/web`) uses flat, functional UI components:
+
+```
++-----------------------------------------------------------------------------------+
+| [Navbar] AgriResolve | Active Network: Stellar Testnet | GCBOKYT7... (Connected)  |
++-----------------------------------------------------------------------------------+
+| [EscrowStepper]                                                                   |
+| (1) Funded  ===>  (2) Delivered  ===>  (3) Disputed  ===>  (4) Resolved           |
++-----------------------------------------------------------------------------------+
+| [TradeDetailsPanel]                                                               |
+| Escrow ID: #1042           | Commodity: White Maize (MAIZE)                      |
+| Contract Amount: 3,500 USDC| Quantity: 10,000 kg @ 0.35 USDC/kg                  |
+| Base Moisture: 12.00%      | Delivery Tolerance: 5.00%                           |
+| Buyer: GCBOKYT7...         | Farmer: GDX712...                                   |
++-----------------------------------------------------------------------------------+
+| [EvidenceUploader]                                                                |
+| Upload Weighbridge Ticket or Moisture Log -> Generates SHA-256 On-Chain Proof     |
++-----------------------------------------------------------------------------------+
+```
+
+- **Navbar**: Shows wallet connection status, network indicator, and active role.
+- **EscrowStepper**: Five-stage visual status indicator reflecting on-chain contract state.
+- **TradeDetailsPanel**: Summarizes physical trade parameters, commodity specifications, and dollar values.
+- **EvidenceUploader**: Converts physical PDFs and sensor CSVs into SHA-256 digests and submits proofs to `agriresolve-dispute`.
